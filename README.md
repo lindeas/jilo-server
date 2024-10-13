@@ -12,16 +12,22 @@ This project is licensed under the GNU General Public License version 2 (GPL-2.0
 
 Clone the git repo. Either run the server with Go or build it and run the executable.
 
+Dependencies:
+
+```bash
+apt install gcc sqlite3 libsqlite3-dev
+```
+
 Run it (mainly used for tests):
 
 ```bash
-go run main.go
+CGO_ENABLED=1 go run main.go
 ```
 
 Build the agent:
 
 ```bash
-go build -o jilo-server main.go
+CGO_ENABLED=1 go build -o jilo-server main.go
 ```
 
 ## configuration
