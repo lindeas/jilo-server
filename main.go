@@ -11,20 +11,22 @@ import (
     "gopkg.in/yaml.v2"
 )
 
+// Structures
+type Agent struct {
+    Endpoint            string      `yaml:"endpoint"`
+    CheckPeriod         int         `yaml:"check_period"`
+}
+type Server struct {
+    Agents              map[string]Agent    `yaml:"agents"`
+}
 type Config struct {
-    RemoteEndpoint      string      `yaml:"item"`
-    CheckPeriod         int         `yaml:"check"`
-    DatabasePath        string      `yaml:"database"`
+    Servers             map[string]Server   `yaml:"servers"`
+    DatabasePath        string              `yaml:"database_path"`
 }
 
-var defaultConfig = Config {
-    RemoteEndpoint: "https://meet.example.com/jvb",
-    CheckPeriod: 5,
-    DatabasePath: "./meet.example.com.db",
-}
-
+// Loading the config file
 func readConfig(filePath string) Config {
-    config := defaultConfig
+    var config Config
 
     file, err := ioutil.ReadFile(filePath)
     if err != nil {
@@ -66,6 +68,7 @@ func setupDatabase(dbPath string) (*sql.DB, error) {
 }
 
 func checkEndpoint(endpoint string) (int, int64) {
+    log.Println("Sending HTTP get request to Jilo agent:", endpoint)
     start := time.Now()
     resp, err := http.Get(endpoint)
     if err != nil {
@@ -75,6 +78,7 @@ func checkEndpoint(endpoint string) (int, int64) {
     defer resp.Body.Close()
 
     elapsed := time.Since(start).Milliseconds()
+    log.Printf("Received response: %d, Time taken: %d ms", resp.StatusCode, elapsed)
     return resp.StatusCode, elapsed
 }
 
@@ -85,26 +89,47 @@ func saveData(db *sql.DB, statusCode int, responseTime int64) {
     }
 }
 
+// Main routine
 func main() {
-    // config file
+    // First flush all the logs
+    log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+    // Config file
+    log.Println("Reading the config file...")
     config := readConfig("jilo-server.conf")
 
     // Connect to or setup the database
+    log.Println("Initializing the database...")
     db, err := setupDatabase(config.DatabasePath)
     if err != nil {
         log.Fatal("Failed to initialize the database:", err)
     }
     defer db.Close()
 
-    ticker := time.NewTicker(time.Duration(config.CheckPeriod) * time.Minute)
-    defer ticker.Stop()
-
     log.Println("Starting endpoint checker...")
 
-    for {
-        statusCode, responseTime := checkEndpoint(config.RemoteEndpoint)
-        log.Printf("Endpoint check: Status code: %d, Response time: %d ms", statusCode, responseTime)
+    // Iterate over the servers and agents
+    for serverName, server := range config.Servers {
+        for agentName, agent := range server.Agents {
+            go func(serverName, agentName string, agent Agent) {
+                // Ticker for the periodic checks
+                ticker := time.NewTicker(time.Duration(agent.CheckPeriod) * time.Minute)
+                defer ticker.Stop()
 
-        <-ticker.C
+                for {
+                    log.Printf("Checking agent [%s - %s]: %s", serverName, agentName, agent.Endpoint)
+                    statusCode, responseTime := checkEndpoint(agent.Endpoint)
+                    log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
+
+                    saveData(db, statusCode, responseTime)
+
+                    // Sleep until the next tick
+                    <-ticker.C
+                }
+            }(serverName, agentName, agent)
+        }
     }
+
+    // Prevent the main from exiting
+    select {}
 }

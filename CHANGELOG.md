@@ -14,3 +14,5 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Initial version
+- Adds support for loading or creating the SQL table
+- Adds simultaneous checks for multiple servers and agents
