@@ -46,6 +46,7 @@ func readConfig(filePath string) Config {
     return config
 }
 
+// Database initialization
 func setupDatabase(dbPath string, initDB bool) (*sql.DB, error) {
 
     // Open the database
@@ -74,7 +75,8 @@ func setupDatabase(dbPath string, initDB bool) (*sql.DB, error) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         status_code INTEGER,
-        response_time_ms INTEGER
+        response_time_ms INTEGER,
+        response_content TEXT
     );`
     _, err = db.Exec(createTable)
     if err != nil {
@@ -99,23 +101,34 @@ func checkTableExists(db *sql.DB) bool {
     return err == nil && name == "endpoint_data"
 }
 
-func checkEndpoint(endpoint string) (int, int64) {
+// Check agent endpoint
+func checkEndpoint(endpoint string) (int, int64, string) {
     log.Println("Sending HTTP get request to Jilo agent:", endpoint)
     start := time.Now()
     resp, err := http.Get(endpoint)
     if err != nil {
         log.Println("Failed to check the endpoint:", err)
-        return 0, 0
+        return 0, 0, ""
     }
     defer resp.Body.Close()
 
     elapsed := time.Since(start).Milliseconds()
+
+    // Read the response body
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        log.Println("Failed to read the response body:", err)
+        return resp.StatusCode, elapsed, ""
+    }
+
     log.Printf("Received response: %d, Time taken: %d ms", resp.StatusCode, elapsed)
-    return resp.StatusCode, elapsed
+
+    return resp.StatusCode, elapsed, string(body)
 }
 
-func saveData(db *sql.DB, statusCode int, responseTime int64) {
-    _, err := db.Exec("INSERT INTO endpoint_data (status_code, response_time_ms) VALUES (?, ?)", statusCode, responseTime)
+// Insert the checks into the database
+func saveData(db *sql.DB, statusCode int, responseTime int64, responseContent string) {
+    _, err := db.Exec("INSERT INTO endpoint_data (status_code, response_time_ms, response_content) VALUES (?, ?, ?)", statusCode, responseTime, responseContent)
     if err != nil {
         log.Println("Failed to insert data into the database:", err)
     }
@@ -126,7 +139,7 @@ func main() {
     // First flush all the logs
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-    // Init the DB, "--init-db" creates the table
+    // Command-line option "--init-db" creates the table
     initDB := flag.Bool("init-db", false, "Create database table if not present without prompting")
     flag.Parse()
 
@@ -154,10 +167,10 @@ func main() {
 
                 for {
                     log.Printf("Checking agent [%s - %s]: %s", serverName, agentName, agent.Endpoint)
-                    statusCode, responseTime := checkEndpoint(agent.Endpoint)
+                    statusCode, responseTime, responseContent := checkEndpoint(agent.Endpoint)
                     log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
 
-                    saveData(db, statusCode, responseTime)
+                    saveData(db, statusCode, responseTime, responseContent)
 
                     // Sleep until the next tick
                     <-ticker.C
