@@ -10,6 +10,7 @@ import (
     "os"
     "time"
 
+    "github.com/golang-jwt/jwt/v5"
     _ "github.com/mattn/go-sqlite3"
     "gopkg.in/yaml.v2"
 )
@@ -17,6 +18,7 @@ import (
 // Structures
 type Agent struct {
     Endpoint            string      `yaml:"endpoint"`
+    Secret              string      `yaml:"secret"`
     CheckPeriod         int         `yaml:"check_period"`
 }
 type Server struct {
@@ -101,11 +103,43 @@ func checkTableExists(db *sql.DB) bool {
     return err == nil && name == "endpoint_data"
 }
 
+// JWT token generation
+func generateJWT(secret string) (string, error) {
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+        "iat": time.Now().Unix(),
+    })
+
+    tokenString, err := token.SignedString([]byte(secret))
+    if err != nil {
+        return "", err
+    }
+
+    return tokenString, nil
+}
+
 // Check agent endpoint
-func checkEndpoint(endpoint string) (int, int64, string) {
-    log.Println("Sending HTTP get request to Jilo agent:", endpoint)
+func checkEndpoint(agent Agent) (int, int64, string) {
+    log.Println("Sending HTTP get request to Jilo agent:", agent.Endpoint)
+
+    // Generate the JWT token
+    token, err := generateJWT(agent.Secret)
+    if err != nil {
+        log.Println("Failed to generate JWT token:", err)
+        return 0, 0, ""
+    }
+
+    // Create the http request
+    req, err := http.NewRequest("GET", agent.Endpoint, nil)
+    if err != nil {
+        log.Println("Failed to create the HTTP request:", err)
+        return 0, 0, ""
+    }
+
+    // Set Authorization header
+    req.Header.Set("Authorization", "Bearer "+token)
+
     start := time.Now()
-    resp, err := http.Get(endpoint)
+    resp, err := http.DefaultClient.Do(req)
     if err != nil {
         log.Println("Failed to check the endpoint:", err)
         return 0, 0, ""
@@ -167,7 +201,7 @@ func main() {
 
                 for {
                     log.Printf("Checking agent [%s - %s]: %s", serverName, agentName, agent.Endpoint)
-                    statusCode, responseTime, responseContent := checkEndpoint(agent.Endpoint)
+                    statusCode, responseTime, responseContent := checkEndpoint(agent)
                     log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
 
                     saveData(db, statusCode, responseTime, responseContent)
