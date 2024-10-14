@@ -2,9 +2,12 @@ package main
 
 import (
     "database/sql"
+    "flag"
+    "fmt"
     "io/ioutil"
     "log"
     "net/http"
+    "os"
     "time"
 
     _ "github.com/mattn/go-sqlite3"
@@ -43,12 +46,26 @@ func readConfig(filePath string) Config {
     return config
 }
 
-func setupDatabase(dbPath string) (*sql.DB, error) {
+func setupDatabase(dbPath string, initDB bool) (*sql.DB, error) {
 
     // Open the database
     db, err := sql.Open("sqlite3", dbPath)
     if err != nil {
         return nil, err
+    }
+
+    // Check if the table exists
+    tableExists := checkTableExists(db)
+    if !tableExists && !initDB {
+        // Ask if we should create the table
+        fmt.Print("Table not found. Do you want to create it? (y/n): ")
+        var response string
+        fmt.Scanln(&response)
+
+        if response != "y" && response != "Y" {
+            log.Println("Exiting because the table is missing, but mandatory.")
+            os.Exit(1)
+        }
     }
 
     // If the table is not there, initialize it
@@ -65,6 +82,21 @@ func setupDatabase(dbPath string) (*sql.DB, error) {
     }
 
     return db, nil
+}
+
+// Check for the table
+func checkTableExists(db *sql.DB) bool {
+    sql := `
+    SELECT name
+        FROM sqlite_master
+        WHERE type='table'
+        AND name='endpoint_data';`
+    row := db.QueryRow(sql)
+
+    var name string
+    err := row.Scan(&name)
+
+    return err == nil && name == "endpoint_data"
 }
 
 func checkEndpoint(endpoint string) (int, int64) {
@@ -94,13 +126,17 @@ func main() {
     // First flush all the logs
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+    // Init the DB, "--init-db" creates the table
+    initDB := flag.Bool("init-db", false, "Create database table if not present without prompting")
+    flag.Parse()
+
     // Config file
     log.Println("Reading the config file...")
     config := readConfig("jilo-server.conf")
 
     // Connect to or setup the database
     log.Println("Initializing the database...")
-    db, err := setupDatabase(config.DatabasePath)
+    db, err := setupDatabase(config.DatabasePath, *initDB)
     if err != nil {
         log.Fatal("Failed to initialize the database:", err)
     }
