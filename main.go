@@ -7,6 +7,7 @@ import (
     "io/ioutil"
     "log"
     "net/http"
+    "net/url"
     "os"
     "time"
 
@@ -148,6 +149,17 @@ func getAgents(db *sql.DB) ([]Agent, error) {
     return agents, nil
 }
 
+// Format the enpoint URL to use in logs
+func getDomainAndPath(fullURL string) string {
+    parsedURL, err := url.Parse(fullURL)
+    if err != nil {
+        // Fallback to the original URL on error
+        return fullURL
+    }
+
+    return parsedURL.Host + parsedURL.Path
+}
+
 // JWT token generation
 func generateJWT(secret string) (string, error) {
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -266,7 +278,7 @@ func main() {
                         log.Printf("Agent [%d]: Status code: %d, Response time: %d ms", agent.ID, statusCode, responseTime)
                         saveData(db, agent.ID, statusCode, responseTime, responseContent)
                     } else {
-                        log.Printf("Check for agent [%d] failed, skipping database insert", agent.ID)
+                        log.Printf("Check for agent %s (%d) failed, skipping database insert", getDomainAndPath(agent.URL), agent.ID)
                     }
 
                     // Sleep until the next tick
@@ -274,7 +286,7 @@ func main() {
                 }
             }(agent)
         } else {
-            log.Printf("Agent [%d] has an invalid CheckPeriod (%d), skipping it.", agent.ID, agent.CheckPeriod)
+            log.Printf("Agent %s (%d) has an invalid CheckPeriod (%d), skipping it.", getDomainAndPath(agent.URL), agent.ID, agent.CheckPeriod)
         }
     }
 
