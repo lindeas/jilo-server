@@ -17,21 +17,22 @@ import (
 
 // Structures
 type Agent struct {
-    Endpoint            string      `yaml:"endpoint"`
-    Secret              string      `yaml:"secret"`
-    CheckPeriod         int         `yaml:"check_period"`
-}
-type Server struct {
-    Agents              map[string]Agent    `yaml:"agents"`
+    ID                  int
+    URL                 string
+    Secret              string
+    CheckPeriod         int
 }
 type Config struct {
-    Servers             map[string]Server   `yaml:"servers"`
-    DatabasePath        string              `yaml:"database_path"`
+    DatabasePath        string      `yaml:"database_path"`
+}
+
+var defaultConfig = Config {
+    DatabasePath: "./jilo-server.db",
 }
 
 // Loading the config file
 func readConfig(filePath string) Config {
-    var config Config
+    config := defaultConfig
 
     file, err := ioutil.ReadFile(filePath)
     if err != nil {
@@ -73,13 +74,15 @@ func setupDatabase(dbPath string, initDB bool) (*sql.DB, error) {
 
     // If the table is not there, initialize it
     createTable := `
-    CREATE TABLE IF NOT EXISTS endpoint_data (
+CREATE TABLE IF NOT EXISTS jilo_agent_checks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         status_code INTEGER,
         response_time_ms INTEGER,
-        response_content TEXT
-    );`
+        response_content TEXT,
+        FOREIGN KEY(agent_id) REFERENCES jilo_agents(id)
+);`
     _, err = db.Exec(createTable)
     if err != nil {
         return nil, err
@@ -90,17 +93,59 @@ func setupDatabase(dbPath string, initDB bool) (*sql.DB, error) {
 
 // Check for the table
 func checkTableExists(db *sql.DB) bool {
-    sql := `
-    SELECT name
-        FROM sqlite_master
-        WHERE type='table'
-        AND name='endpoint_data';`
+    sql := `SELECT
+                name
+            FROM
+                sqlite_master
+            WHERE
+                type='table'
+            AND
+                name='jilo_agent_checks';`
     row := db.QueryRow(sql)
 
     var name string
     err := row.Scan(&name)
 
-    return err == nil && name == "endpoint_data"
+    return err == nil && name == "jilo_agent_checks"
+}
+
+// Get Jilo agents details
+func getAgents(db *sql.DB) ([]Agent, error) {
+    sql := `SELECT
+                ja.id,
+                ja.url,
+                ja.secret_key,
+                ja.check_period,
+                jat.endpoint
+            FROM
+                jilo_agents ja
+            JOIN
+                jilo_agent_types jat ON ja.agent_type_id = jat.id`
+    rows, err := db.Query(sql)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var agents []Agent
+    for rows.Next() {
+        var agent Agent
+        var endpoint string
+        var checkPeriod int
+
+        // Get the agent details
+        if err := rows.Scan(&agent.ID, &agent.URL, &agent.Secret, &checkPeriod, &endpoint); err != nil {
+            return nil, err
+        }
+        // Form the whole enpoint
+        agent.URL += endpoint
+        agent.CheckPeriod = checkPeriod
+
+        agents = append(agents, agent)
+    }
+
+    // We return the endpoints, not all the details
+    return agents, nil
 }
 
 // JWT token generation
@@ -119,10 +164,10 @@ func generateJWT(secret string) (string, error) {
 
 // Check agent endpoint
 func checkEndpoint(agent Agent) (int, int64, string, bool) {
-    log.Println("Sending HTTP get request to Jilo agent:", agent.Endpoint)
+    log.Println("Sending HTTP get request to Jilo agent:", agent.URL)
 
     // Create the http request
-    req, err := http.NewRequest("GET", agent.Endpoint, nil)
+    req, err := http.NewRequest("GET", agent.URL, nil)
     if err != nil {
         log.Println("Failed to create the HTTP request:", err)
         return 0, 0, "", false
@@ -162,8 +207,13 @@ func checkEndpoint(agent Agent) (int, int64, string, bool) {
 }
 
 // Insert the checks into the database
-func saveData(db *sql.DB, statusCode int, responseTime int64, responseContent string) {
-    _, err := db.Exec("INSERT INTO endpoint_data (status_code, response_time_ms, response_content) VALUES (?, ?, ?)", statusCode, responseTime, responseContent)
+func saveData(db *sql.DB, agentID int, statusCode int, responseTime int64, responseContent string) {
+    sql := `INSERT INTO
+                jilo_agent_checks
+                    (agent_id, status_code, response_time_ms, response_content)
+                VALUES
+                    (?, ?, ?, ?)`
+    _, err := db.Exec(sql, agentID, statusCode, responseTime, responseContent)
     if err != nil {
         log.Println("Failed to insert data into the database:", err)
     }
@@ -176,11 +226,14 @@ func main() {
 
     // Command-line option "--init-db" creates the table
     initDB := flag.Bool("init-db", false, "Create database table if not present without prompting")
+
+    configPath := flag.String("config", "jilo-server.conf", "Path to the configuration file")
+
     flag.Parse()
 
     // Config file
     log.Println("Reading the config file...")
-    config := readConfig("jilo-server.conf")
+    config := readConfig(*configPath)
 
     // Connect to or setup the database
     log.Println("Initializing the database...")
@@ -190,30 +243,38 @@ func main() {
     }
     defer db.Close()
 
+    // Prepare the Agents
+    agents, err := getAgents(db)
+    if err != nil {
+        log.Fatal("Failed to fetch the agents:", err)
+    }
+
     log.Println("Starting endpoint checker...")
 
     // Iterate over the servers and agents
-    for serverName, server := range config.Servers {
-        for agentName, agent := range server.Agents {
-            go func(serverName, agentName string, agent Agent) {
+    for _, agent := range agents {
+        if agent.CheckPeriod > 0 {
+            go func(agent Agent) {
                 // Ticker for the periodic checks
                 ticker := time.NewTicker(time.Duration(agent.CheckPeriod) * time.Minute)
                 defer ticker.Stop()
 
                 for {
-                    log.Printf("Checking agent [%s - %s]: %s", serverName, agentName, agent.Endpoint)
+                    log.Printf("Checking agent [%d]: %s", agent.ID, agent.URL)
                     statusCode, responseTime, responseContent, success := checkEndpoint(agent)
                     if success {
-                        log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
-                        saveData(db, statusCode, responseTime, responseContent)
+                        log.Printf("Agent [%d]: Status code: %d, Response time: %d ms", agent.ID, statusCode, responseTime)
+                        saveData(db, agent.ID, statusCode, responseTime, responseContent)
                     } else {
-                        log.Printf("Check for agent [%s - %s] failed, kipping database insert", serverName, agentName)
+                        log.Printf("Check for agent [%d] failed, skipping database insert", agent.ID)
                     }
 
                     // Sleep until the next tick
                     <-ticker.C
                 }
-            }(serverName, agentName, agent)
+            }(agent)
+        } else {
+            log.Printf("Agent [%d] has an invalid CheckPeriod (%d), skipping it.", agent.ID, agent.CheckPeriod)
         }
     }
 
