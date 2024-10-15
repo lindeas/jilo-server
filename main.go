@@ -236,16 +236,28 @@ func main() {
     // First flush all the logs
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-    // Command-line option "--init-db" creates the table
+    // Command-line options
+    // "--init-db" creates the table
     initDB := flag.Bool("init-db", false, "Create database table if not present without prompting")
-
-    configPath := flag.String("config", "jilo-server.conf", "Path to the configuration file")
+    // Config file
+    configPath := flag.String("config", "", "Path to the configuration file (use -c or --config)")
+    flag.StringVar(configPath, "c", "", "Path to the configuration file")
 
     flag.Parse()
 
+    // Choosing the config file
+    finalConfigPath := "./jilo-server.conf" // this is the default we fall to
+    if *configPath != "" {
+        if _, err := os.Stat(*configPath); err == nil {
+            finalConfigPath = *configPath
+        } else {
+            log.Printf("Specified file \"%s\" doesn't exist. Falling back to the default \"%s\".", *configPath, finalConfigPath)
+        }
+    }
+
     // Config file
-    log.Println("Reading the config file...")
-    config := readConfig(*configPath)
+    log.Printf("Using config file %s", finalConfigPath)
+    config := readConfig(finalConfigPath)
 
     // Connect to or setup the database
     log.Println("Initializing the database...")
