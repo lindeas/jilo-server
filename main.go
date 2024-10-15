@@ -118,31 +118,32 @@ func generateJWT(secret string) (string, error) {
 }
 
 // Check agent endpoint
-func checkEndpoint(agent Agent) (int, int64, string) {
+func checkEndpoint(agent Agent) (int, int64, string, bool) {
     log.Println("Sending HTTP get request to Jilo agent:", agent.Endpoint)
-
-    // Generate the JWT token
-    token, err := generateJWT(agent.Secret)
-    if err != nil {
-        log.Println("Failed to generate JWT token:", err)
-        return 0, 0, ""
-    }
 
     // Create the http request
     req, err := http.NewRequest("GET", agent.Endpoint, nil)
     if err != nil {
         log.Println("Failed to create the HTTP request:", err)
-        return 0, 0, ""
+        return 0, 0, "", false
     }
 
-    // Set Authorization header
-    req.Header.Set("Authorization", "Bearer "+token)
+    // Generate the JWT token
+    if agent.Secret != "" {
+        token, err := generateJWT(agent.Secret)
+        if err != nil {
+            log.Println("Failed to generate JWT token:", err)
+            return 0, 0, "", false
+        }
+        // Set Authorization header
+        req.Header.Set("Authorization", "Bearer "+token)
+    }
 
     start := time.Now()
     resp, err := http.DefaultClient.Do(req)
     if err != nil {
         log.Println("Failed to check the endpoint:", err)
-        return 0, 0, ""
+        return 0, 0, "", false
     }
     defer resp.Body.Close()
 
@@ -152,12 +153,12 @@ func checkEndpoint(agent Agent) (int, int64, string) {
     body, err := ioutil.ReadAll(resp.Body)
     if err != nil {
         log.Println("Failed to read the response body:", err)
-        return resp.StatusCode, elapsed, ""
+        return resp.StatusCode, elapsed, "", false
     }
 
     log.Printf("Received response: %d, Time taken: %d ms", resp.StatusCode, elapsed)
 
-    return resp.StatusCode, elapsed, string(body)
+    return resp.StatusCode, elapsed, string(body), true
 }
 
 // Insert the checks into the database
@@ -201,10 +202,13 @@ func main() {
 
                 for {
                     log.Printf("Checking agent [%s - %s]: %s", serverName, agentName, agent.Endpoint)
-                    statusCode, responseTime, responseContent := checkEndpoint(agent)
-                    log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
-
-                    saveData(db, statusCode, responseTime, responseContent)
+                    statusCode, responseTime, responseContent, success := checkEndpoint(agent)
+                    if success {
+                        log.Printf("Agent [%s - %s]: Status code: %d, Response time: %d ms", serverName, agentName, statusCode, responseTime)
+                        saveData(db, statusCode, responseTime, responseContent)
+                    } else {
+                        log.Printf("Check for agent [%s - %s] failed, kipping database insert", serverName, agentName)
+                    }
 
                     // Sleep until the next tick
                     <-ticker.C
