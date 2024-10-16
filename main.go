@@ -18,17 +18,23 @@ import (
 
 // Structures
 type Agent struct {
-    ID                  int
-    URL                 string
-    Secret              string
-    CheckPeriod         int
+    ID              int
+    URL             string
+    Secret          string
+    CheckPeriod     int
 }
 type Config struct {
-    DatabasePath        string      `yaml:"database_path"`
+    DatabasePath            string      `yaml:"database_path"`
+    HealthCheckEnabled      bool        `yaml:"health_check_enabled"`
+    HealthCheckPort         int         `yaml:"health_check_port"`
+    HealthCheckEndpoint     string      `yaml:"health_check_endpoint"`
 }
 
 var defaultConfig = Config {
     DatabasePath: "./jilo-server.db",
+    HealthCheckEnabled: false,
+    HealthCheckPort: 8080,
+    HealthCheckEndpoint: "/health",
 }
 
 // Loading the config file
@@ -48,6 +54,19 @@ func readConfig(filePath string) Config {
     }
 
     return config
+}
+
+// Start the health check
+func startHealthCheckServer(port int, endpoint string) {
+    http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("Jilo Server is running"))
+    })
+
+    address := fmt.Sprintf(":%d", port)
+
+    log.Printf("Starting health check server on %s%s", address, endpoint)
+    go http.ListenAndServe(address, nil)
 }
 
 // Database initialization
@@ -258,6 +277,11 @@ func main() {
     // Config file
     log.Printf("Using config file %s", finalConfigPath)
     config := readConfig(finalConfigPath)
+
+    // Start the health check, if it's enabled in the config file
+    if config.HealthCheckEnabled {
+        startHealthCheckServer(config.HealthCheckPort, config.HealthCheckEndpoint)
+    }
 
     // Connect to or setup the database
     log.Println("Initializing the database...")
