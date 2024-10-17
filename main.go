@@ -59,8 +59,9 @@ func readConfig(filePath string) Config {
 // Start the health check
 func startHealthCheckServer(port int, endpoint string) {
     http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
+        // If the server is healthy, the response if 200 OK json, no content
+        w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(http.StatusOK)
-        w.Write([]byte("Jilo Server is running"))
     })
 
     address := fmt.Sprintf(":%d", port)
