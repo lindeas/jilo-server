@@ -135,8 +135,8 @@ func getAgents(db *sql.DB) ([]Agent, error) {
     sql := `SELECT
                 ja.id,
                 ja.url,
-                ja.secret_key,
-                ja.check_period,
+                COALESCE(ja.secret_key, '') AS secret_key,
+                COALESCE(ja.check_period, 0) AS check_period,
                 jat.endpoint
             FROM
                 jilo_agents ja
