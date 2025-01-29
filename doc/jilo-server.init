@@ -1,0 +1,76 @@
+#!/bin/bash
+# /etc/init.d/jilo-server
+# Init script for Jilo Server
+
+### BEGIN INIT INFO
+# Provides:          jilo-server
+# Required-Start:    $network
+# Required-Stop:     $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Start the Jilo Server service
+# Description:       This script starts and stops the Jilo Server service.
+### END INIT INFO
+
+SERVER_PATH="/usr/local/bin/jilo-server"
+CONFIG_FILE="/usr/local/etc/jilo-server.conf"
+SERVER_NAME="Jilo Agent"
+SERVER_PID="/var/run/jilo-server.pid"
+LOG_FILE="/var/log/jilo-server.log"
+
+# Function to start the jilo server
+start_server() {
+    if [ -f "$SERVER_PID" ]; then
+        echo "$SERVER_NAME is already running."
+    else
+        echo "Starting $SERVER_NAME..."
+        nohup $SERVER_PATH -c $CONFIG_FILE > $LOG_FILE 2>&1 &
+        echo $! > "$SERVER_PID"
+        echo "$SERVER_NAME started."
+    fi
+}
+
+# Function to stop the jilo server
+stop_server() {
+    if [ ! -f "$SERVER_PID" ]; then
+        echo "$SERVER_NAME is not running."
+    else
+        echo "Stopping $SERVER_NAME..."
+        kill -9 $(cat "$SERVER_PID") && rm -f "$SERVER_PID"
+        echo "$SERVER_NAME stopped."
+    fi
+}
+
+# Function to restart the jilo server
+restart_server() {
+    echo "Restarting $SERVER_NAME..."
+    stop_server
+    sleep 1
+    start_server
+}
+
+# Check for the first argument
+case "$1" in
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    restart)
+        restart_server
+        ;;
+    status)
+        if [ -f "$SERVER_PID" ]; then
+            echo "$SERVER_NAME is running with PID $(cat $SERVER_PID)."
+        else
+            echo "$SERVER_NAME is not running."
+        fi
+        ;;
+    *)
+        echo "Usage: /etc/init.d/jilo-server {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,14 @@
+[Unit]
+Description=Jilo Server Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/jilo-server -c /usr/local/etc/jilo-server.conf
+PIDFile=/run/jilo-server.pid
+Restart=on-failure
+SyslogIdentifier=jilo-server
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
