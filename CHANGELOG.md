@@ -20,3 +20,5 @@ All notable changes to this project will be documented in this file.
 - Agents config in the database, to be shared with Jilo Web
 - Adds config file command-line option
 - Adds health self-check with json endpoint
+- Adds build and install scripts
+- Adds initV script and systemd service files
